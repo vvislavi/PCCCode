@@ -163,7 +163,8 @@ Bool_t PCCContainer::ConstructContainer(TString fina) {
 Bool_t PCCContainer::ConstructContainer(TFile *infi, Int_t lInd) {
   // printf("Constructor called!\n");
   if(!infi) return 0;
-  fFC = (AliGFWFlowContainer*)getObj(infi,Form("FlowContainer_%i",lInd));
+  fFC = (AliGFWFlowContainer*)getObj(infi,Form("FlowContainer__%i",lInd));
+  if(!fFC) fFC = (AliGFWFlowContainer*)getObj(infi,Form("FlowContainer_%i",lInd));
   if(!fFC) return 0;
   TList *tl = (TList*)getObj(infi,Form("MPTDiff_%i",lInd));
   if(!tl) {delete fFC; return 0; };
@@ -544,6 +545,7 @@ TProfile *PCCContainer::getStatistics(lFunc sf) {
 }
 TH1 *PCCContainer::getSystematicsObs(lFunc sf, Int_t lSyst, Bool_t bootstrap) {
   if(sf==kDisabled) return 0;
+  if(fNrb>0) bootstrap=kTRUE;
   //Rewriting so that I can add final state rebinning at the end
   TH1 *reth = 0;
   if(sf == kMpt || sf == kSQCK) reth = (this->*sf)(-1,0);
@@ -571,7 +573,9 @@ TH1 *PCCContainer::getSystematics(lFunc sf, Int_t lSyst, Bool_t rel, Bool_t boot
   TH1 *mod = getSystematicsObs(sf,lSyst,bootstrap);//(trg->*sf)(-1,bootstrap);
   if(!mod) {printf("Could not fetch systematic index %i\n", lSyst); return 0; };
   mod->SetName("Modded");
-  TH1 *nom = (this->*sf)(-1,bootstrap);
+  //If we have final state rebinning, then need bootstrapping on the nominal here. Otherwise, final state rebinning will be bogus
+  TH1 *nom = (this->*sf)(-1,fNrb>0?kTRUE:bootstrap);
+  FSRebin(&nom);
   mod->SetName(Form("RelSyst_%s_Ind%i",nom->GetName(),lSyst));
   mod->Add(nom,-1);
   if(rel)

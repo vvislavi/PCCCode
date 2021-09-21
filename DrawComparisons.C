@@ -15,14 +15,18 @@ void ShapeHist(TH1 *inh) {
 }
 TCanvas *DrawComparison(PCCContainer::lFunc sf, Double_t ymin=0.001, Double_t ymax=0.3, TString exName="") {
   if(!pc15) {
-    pc15 = new PCCContainer("LHC15o.root",1);
-    pc18 = new PCCContainer("LHC15o_pass1.root",1);//LHC18qr.root",1);
+    // pc15 = new PCCContainer("Inputs/LHC15o_pass1.root",1);
+    // pc18 = new PCCContainer("Inputs/LHC15o_pass2.root",1);//LHC18qr.root",1);
+    pc15 = new PCCContainer("LHC15o_pass1_mine.root",1);
+    pc18 = new PCCContainer("Inputs/LHC15o_pass2_tc11.root",1);//LHC18qr.root",1);
   };
   pc15->RebinMulti(nrb,0);
   pc18->RebinMulti(nrb,0);
   TCanvas *rc = BuildCanvasForRatios(500,0.33,0.02);
-  TH1 *h18 = pc18->Var(sf);
+  TH1 *h18temp = pc18->Var(sf);
   TH1 *h15 = pc15->Var(sf);
+  TH1 *h18 = getHistRebinned(h18temp,h15);
+  delete h18temp;
   h18->GetXaxis()->SetTitle("V0M %");
   h15->GetXaxis()->SetTitle("V0M %");
   TPad *tp = (TPad*)rc->FindObject("top");
@@ -31,8 +35,8 @@ TCanvas *DrawComparison(PCCContainer::lFunc sf, Double_t ymin=0.001, Double_t ym
   if(sf==kPCC3) tleg = Legend(0.193333,0.671346,0.493333,0.971772);
   else tleg = Legend(0.183811,0.0436661,0.48398,0.342775);
   if(!exName.IsNull()) tleg->AddEntry((TObject*)0x0,exName.Data(),"");
-  tleg->AddEntry(h15,"LHC15o pass2","L");
-  tleg->AddEntry(h18,"LHC15o pass1", "L");//"LHC18qr pass3","L");
+  tleg->AddEntry(h15,"LHC15o pass1","L");
+  tleg->AddEntry(h18,"LHC15o pass2", "L");//"LHC18qr pass3","L");
   h15->SetLineColor(kRed+1);
   h18->SetLineColor(kBlue+1);
   h15->SetLineWidth(2);
@@ -46,7 +50,7 @@ TCanvas *DrawComparison(PCCContainer::lFunc sf, Double_t ymin=0.001, Double_t ym
   TH1 *hrat = (TH1*)h15->Clone(Form("%s_ratio",h15->GetName()));
   hrat->Divide(h18);
   hrat->GetYaxis()->SetRangeUser(0.49,1.51);
-  hrat->GetYaxis()->SetTitle("Ratio, pass2/pass1");
+  hrat->GetYaxis()->SetTitle("Ratio, pass1/pass2");
   TPad *bt = (TPad*)rc->FindObject("bot");
   bt->cd();
   hrat->Draw();
@@ -55,15 +59,15 @@ TCanvas *DrawComparison(PCCContainer::lFunc sf, Double_t ymin=0.001, Double_t ym
 void DrawComparisons() {
   TCanvas *c;
   c = DrawComparison(kPCC2);
-  c->Print("Plots20210816/PCC.pdf(");
+  c->Print("Plots20210826/PCC.pdf(");
   delete c;
   c = DrawComparison(kPCC3Sub,0.001,0.3,"3-sub");
-  c->Print("Plots20210816/PCC.pdf");
+  c->Print("Plots20210826/PCC.pdf");
   delete c;
   c = DrawComparison(kPCC3);
-  c->Print("Plots20210816/PCC.pdf");
+  c->Print("Plots20210826/PCC.pdf");
   delete c;
   c = DrawComparison(kMultiHar,-0.99,0.99);
-  c->Print("Plots20210816/PCC.pdf)");
+  c->Print("Plots20210826/PCC.pdf)");
   delete c;
 }
