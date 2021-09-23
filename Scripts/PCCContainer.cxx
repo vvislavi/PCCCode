@@ -947,4 +947,20 @@ void PCCContainer::FSRebin(TH1 **inh) {
   }
   delete sH;
   (*inh) = tH;
+};
+TGraphErrors *PCCContainer::f_HtoGr(TH1 *inh, Double_t xOffset, Double_t xError) {
+  if(!inh) {printf("Input histogram is a NULL!\n"); return 0; };
+  TGraphErrors *retgr = new TGraphErrors();
+  for(Int_t i=1;i<=inh->GetNbinsX();i++) {
+    Double_t v_x = inh->GetBinCenter(i)+xOffset;
+    Double_t v_y = inh->GetBinContent(i);
+    Double_t e_x = inh->GetBinWidth(i)/2;
+    if(xError>=0) e_x=xError;
+    Double_t e_y = inh->GetBinError(i);
+    retgr->SetPoint(i-1,v_x,v_y);
+    retgr->SetPointError(i-1,e_x,e_y);
+  }
+  retgr->GetXaxis()->SetTitle(inh->GetXaxis()->GetTitle());
+  retgr->GetYaxis()->SetTitle(inh->GetYaxis()->GetTitle());
+  return retgr;
 }

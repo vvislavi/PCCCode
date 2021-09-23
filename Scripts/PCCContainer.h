@@ -32,7 +32,13 @@ public:
   void RebinMulti(Int_t nrb, Double_t *chbins);
   TH1 *Var(lFunc sf, Int_t ind=0) { return getSystematicsObs(sf,ind,kTRUE); };//(this->*sf)(ind,kTRUE); };
   TH1 *VarSyst(lFunc, Bool_t relative=kTRUE, Bool_t applyBarlow=kTRUE);
+  //Simple graph with statistical uncertainties
+  TGraphErrors *Gr(lFunc sf, Double_t xOffset=0, Double_t xError=-1) { TH1 *ht = Var(sf); TGraphErrors *gr = f_HtoGr(ht,xOffset,xError); delete ht; return gr; };
+  //Simple graph with syst. uncertainties
+  TGraphErrors *GrSyst(lFunc sf, Bool_t relative=kTRUE, Bool_t applyBarlow=kTRUE, Double_t xOffset=0, Double_t xError=-1) { TH1 *ht = VarSyst(sf,relative,applyBarlow); TGraphErrors *gr = f_HtoGr(ht,xOffset,xError); delete ht; return gr; };
+  //Graph with stat + Nch unfolding and closure correction
   TGraphErrors *GrVar(lFunc sf, Bool_t includeXError=kFALSE, Double_t xErrorSize=0.5) { TH1 *htemp = Var(sf,0); TGraphErrors *retgr = NchRecToGen(htemp,includeXError,xErrorSize); delete htemp; ApplyClosureCorrection(sf, retgr); return retgr; };
+  //Graph with syst + Nch unfolding and closure correction
   TGraphErrors *GrVarSyst(lFunc sf, Bool_t relative=kTRUE, Bool_t applyBarlow=kTRUE, Bool_t includeXError=kFALSE, Double_t xErrorSize=0.5) { TH1 *htemp = VarSyst(sf,relative,applyBarlow); TGraphErrors *retgr = NchRecToGen(htemp,includeXError,xErrorSize); ApplyClosureCorrection(sf, retgr); delete htemp; return retgr; }
   TH1 *Syst(lFunc sf, Int_t ind, Bool_t rel=kTRUE, Bool_t applyBarlow=kTRUE) { return getSystematics(sf,ind,rel,kFALSE,applyBarlow); };
   TH1 *Barlow(lFunc sf, Int_t ind) { return  getBarlowTest(sf, ind, getCorrelationError(ind)); };
@@ -141,6 +147,8 @@ public:
   vector<TH1*> getSystSubset(lFunc, Int_t KeyInd, Bool_t relative=kTRUE, Bool_t ApplyBarlow=kFALSE);
   TH1 *GetTerms();
   void FSRebin(TH1 **inh);
+private:
+  TGraphErrors *f_HtoGr(TH1 *inh, Double_t xOffset=0, Double_t xError=-1);
 
   ClassDef(PCCContainer, 1);
 };
