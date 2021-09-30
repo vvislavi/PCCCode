@@ -2,8 +2,11 @@
 using namespace PCCSpace;
 PCCContainer::PCCContainer():
   TNamed("",""),
+  fInitialized(kFALSE),
   fObjs(0),
   fSysts(0),
+  fBootstrapMean(kFALSE),
+  fUseFSRebin(kTRUE),
   fNrb(0),
   fBrb(0),
   fSystAvgRange(0),
@@ -25,13 +28,19 @@ PCCContainer::PCCContainer():
   fNRebinForSyst(0),
   fRecGen(0),
   fNchMC(0),
-  fNchCorrFunc(0)
+  fNchCorrFunc(0),
+  f_mpt_tl(0),
+  f_cov_tl(0),
+  fxTitle("V0M")//"#it{N}_{ch} (|#eta|<0.8)")
 {
 };
 PCCContainer::PCCContainer(TString nomFile, Int_t MaxSyst): //Constructor to read file (nominal + systematics)
   TNamed("",""),
+  fInitialized(kFALSE),
   fObjs(0),
   fSysts(0),
+  fBootstrapMean(kFALSE),
+  fUseFSRebin(kTRUE),
   fNrb(0),
   fBrb(0),
   fSystAvgRange(0),
@@ -53,7 +62,10 @@ PCCContainer::PCCContainer(TString nomFile, Int_t MaxSyst): //Constructor to rea
   fNRebinForSyst(0),
   fRecGen(0),
   fNchMC(0),
-  fNchCorrFunc(0)
+  fNchCorrFunc(0),
+  f_mpt_tl(0),
+  f_cov_tl(0),
+  fxTitle("V0M")//"#it{N}_{ch} (|#eta|<0.8)")
 {
   ConstructContainer(nomFile);
   // if(!systFile.IsNull()) ReadSystematics(systFile);
@@ -66,11 +78,14 @@ PCCContainer::~PCCContainer()
   delete fNchMC;
   delete fNchCorrFunc;
   delete fMultiDist;
+  delete f_mpt_tl;
+  delete f_cov_tl;
+  if(fFC) delete fFC;
 };
 TFile *PCCContainer::getFile(TString fina) {
   if(fina.IsNull()) { printf("File name not specified\n"); return 0; };
   TFile *retf = new TFile(fina.Data());
-  if(!retf || retf->IsZombie()) { printf("File %s not opened properly!\n",fina.Data()); return 0; };
+  if(!retf || retf->IsZombie()) { delete fina; printf("File %s not opened properly!\n",fina.Data()); return 0; };
   return retf;
 }
 TObject *PCCContainer::getObj(TFile *infi, TString objName) {
@@ -147,7 +162,9 @@ void PCCContainer::ApplyErrors(TH1 *inh, TH1 *errors, Bool_t relative) {
   }
 }
 Bool_t PCCContainer::ConstructContainer(TString fina) {
+  fInitialized = kFALSE;
   TFile *infi = getFile(fina);
+  if(!infi) return kFALSE;
   ConstructContainer(infi,0);
   for(Int_t i=0;i<fMaxSyst;i++) {
     PCCContainer *systCont = new PCCContainer();
@@ -158,6 +175,8 @@ Bool_t PCCContainer::ConstructContainer(TString fina) {
     fSysts->Add(systCont);
   }
   infi->Close();
+  delete infi;
+  fInitialized=kTRUE;
   return kTRUE;
 }
 Bool_t PCCContainer::ConstructContainer(TFile *infi, Int_t lInd) {
@@ -165,39 +184,44 @@ Bool_t PCCContainer::ConstructContainer(TFile *infi, Int_t lInd) {
   if(!infi) return 0;
   fFC = (AliGFWFlowContainer*)getObj(infi,Form("FlowContainer__%i",lInd));
   if(!fFC) fFC = (AliGFWFlowContainer*)getObj(infi,Form("FlowContainer_%i",lInd));
+  if(!fFC) fFC = (AliGFWFlowContainer*)getObj(infi,"FlowContainer");
   if(!fFC) return 0;
-  TList *tl = (TList*)getObj(infi,Form("MPTDiff_%i",lInd));
-  if(!tl) {delete fFC; return 0; };
-  if(tl->FindObject("ckcont_ch")) fck = (AliCkContainer*)tl->FindObject("ckcont_ch");
-                             else fckbs = (AliProfileBS*)tl->FindObject("varpt_ch");
+  f_mpt_tl = (TList*)getObj(infi,Form("MPTDiff_%i",lInd));
+  if(!f_mpt_tl) f_mpt_tl = (TList*)getObj(infi,"MPTDiff");
+  if(!f_mpt_tl) {delete fFC; return 0; };
+  if(f_mpt_tl->FindObject("ckcont_ch")) fck = (AliCkContainer*)f_mpt_tl->FindObject("ckcont_ch");
+                             else fckbs = (AliProfileBS*)f_mpt_tl->FindObject("varpt_ch");
   if(!fck && !fckbs) { delete fFC; return 0; };
-  if(fckbs) fmpt = (AliProfileBS*)tl->FindObject("MeanPtClosure_ch");
+  if(fckbs) fmpt = (AliProfileBS*)f_mpt_tl->FindObject("MeanPtClosure_ch");
        else fmpt = (AliProfileBS*)fck->getObsList()->At(2);
-  if(fck) fck->SetTitle(";#it{N}_{ch} (|#eta|<0.8); #it{c}_{K}");
-  else fckbs->SetTitle(";#it{N}_{ch} (|#eta|<0.8); #it{c}_{K}");
+  if(fck) fck->SetTitle(Form(";%s; #it{c}_{K}",fxTitle.Data()));
+  else fckbs->SetTitle(Form(";%s; #it{c}_{K}",fxTitle.Data()));
   // fMultiDist = (TH1*)tl->FindObject("MultiDistribution");
 
 
   // TString sfsub = lInd?Form("_SystFlag%i_",lInd):"";
   // fmpt = (TProfile*)tl->FindObject(Form("MeanPtClosure_ch%s",sfsub.Data()));
   // if(!fmpt) { delete fck, delete fFC; return 0; };
-  tl = (TList*)getObj(infi,Form("Covariance_%i",lInd));
-  if(!tl) { delete fFC; delete fck; delete fckbs; return 0; };
+  // delete tl;
+  f_cov_tl = (TList*)getObj(infi,Form("Covariance_%i",lInd));
+  if(!f_cov_tl) f_cov_tl = (TList*)getObj(infi,"Covariance");
+  if(!f_cov_tl) { delete fFC; delete fck; delete fckbs; delete f_mpt_tl; return 0; };
   if(fckbs) { //If we are working with the "old" setup
-    fcov2 = (AliProfileBS*)tl->FindObject("cov_ch");
-    fcov3 = (AliProfileBS*)tl->FindObject("cov_v3_ch");
-    fcov23 = (AliProfileBS*)tl->FindObject("cov_v23_ch");
+    fcov2 = (AliProfileBS*)f_cov_tl->FindObject("cov_ch");
+    fcov3 = (AliProfileBS*)f_cov_tl->FindObject("cov_v3_ch");
+    fcov23 = (AliProfileBS*)f_cov_tl->FindObject("cov_v23_ch");
     if(!fcov2 || !fcov3 || !fcov23) { delete fcov2; delete fcov3; delete fcov23; };
   } else { //For newer setup -- would have been so much more simple if I kept the naming didn't change!
-    fcov2 = (AliProfileBS*)tl->FindObject("covmpt_ch");
-    fcov3 = (AliProfileBS*)tl->FindObject("covmpt_v3_ch");
-    fcov23 = (AliProfileBS*)tl->FindObject("covmpt_v23_ch");
-    fcov2nopt = (AliProfileBS*)tl->FindObject("covnopt_ch");
-    fcov3nopt = (AliProfileBS*)tl->FindObject("covnopt_v3_ch");
-    fcov23nopt = (AliProfileBS*)tl->FindObject("covnopt_v23_ch");
+    fcov2 = (AliProfileBS*)f_cov_tl->FindObject("covmpt_ch");
+    fcov3 = (AliProfileBS*)f_cov_tl->FindObject("covmpt_v3_ch");
+    fcov23 = (AliProfileBS*)f_cov_tl->FindObject("covmpt_v23_ch");
+    fcov2nopt = (AliProfileBS*)f_cov_tl->FindObject("covnopt_ch");
+    fcov3nopt = (AliProfileBS*)f_cov_tl->FindObject("covnopt_v3_ch");
+    fcov23nopt = (AliProfileBS*)f_cov_tl->FindObject("covnopt_v23_ch");
     if(!fcov2 || !fcov3 || !fcov23 || !fcov2nopt || !fcov3nopt || !fcov23nopt ) { delete fcov2; delete fcov3; delete fcov23; delete fcov2nopt; delete fcov3nopt; delete fcov23nopt; };
   }
   if(!fcov2) { delete fFC; delete fck; delete fckbs; return 0;};
+  // delete tl;
   // fcov2 = (AliProfileBS*)tl->At(0);
   // fcov2nopt = (AliProfileBS*)tl->At(1);
   // fcov2->SetTitle(";#it{N}_{ch} (|#eta|<0.8); cov(v_{2}^{2}, [#it{p}_{T}])");
@@ -209,6 +233,7 @@ Bool_t PCCContainer::ConstructContainer(TFile *infi, Int_t lInd) {
   // fcov23nopt = (AliProfileBS*)tl->At(5);
   // if(!fcov3 || !fcov23) printf("ConstructContainer: Warning! covariance for v3 and/or v2v3 was not found! Multi-harmonic PCC will fail...\n");
   // fmpt  = (AliProfileBS*)fmpt->Clone(Form("MeanPt_%i",lInd));
+  fInitialized=kTRUE;
   return kTRUE;
 }
 Bool_t PCCContainer::OverrideMeanPt(TString infi, Int_t lInd) {
@@ -265,34 +290,38 @@ void PCCContainer::RebinMulti(Int_t nrb, Double_t *chbins) {
     fMeanNch->SetDirectory(0);
     for(Int_t i=1;i<=fMultiDist->GetNbinsX();i++) fMeanNch->Fill(fMultiDist->GetBinCenter(i),fMultiDist->GetBinCenter(i),fMultiDist->GetBinContent(i));
   }
-  return;
-
+  if(fUseFSRebin) return;
   if(!fFC || !fck || !fcov2) return;
-  fFC->SetMultiRebin(nrb,chbins);
-  fck->RebinMulti(nrb,chbins);
-  fcov2->RebinMulti(nrb,chbins);
-  fcov23->RebinMulti(nrb,chbins);
-  fcov3->RebinMulti(nrb,chbins);
-  fcov2nopt->RebinMulti(nrb,chbins);
-  fcov23nopt->RebinMulti(nrb,chbins);
-  fcov3nopt->RebinMulti(nrb,chbins);
-  fmpt->RebinMulti(nrb,chbins);
+  if(fFC) fFC->SetMultiRebin(nrb,chbins);
+  if(fck) {
+    fck->RebinMulti(nrb,chbins);
+    fck->CalculateCks();
+  };
+  if(fcov2) fcov2->RebinMulti(nrb,chbins);
+  if(fcov23) fcov23->RebinMulti(nrb,chbins);
+  if(fcov3) fcov3->RebinMulti(nrb,chbins);
+  if(fcov2nopt) fcov2nopt->RebinMulti(nrb,chbins);
+  if(fcov23nopt) fcov23nopt->RebinMulti(nrb,chbins);
+  if(fcov3nopt) fcov3nopt->RebinMulti(nrb,chbins);
+  if(fmpt) fmpt->RebinMulti(nrb,chbins);
   if(fSysts) {
     for(Int_t i=0;i<fSysts->GetEntries();i++) ((PCCContainer*)fSysts->At(i))->RebinMulti(nrb,chbins);
   }
-  MakeNchMC(); //Only done if fRecGen is set
-  if(fMultiDist) {
-    if(fMeanNch) delete fMeanNch;
-    fMeanNch = new TProfile("Mean_Nch_in_bin",";#it{N}_{ch}; #LT#it{N}_{ch}#GT",nrb,chbins);
-    fMeanNch->SetDirectory(0);
-    for(Int_t i=1;i<=fMultiDist->GetNbinsX();i++) fMeanNch->Fill(fMultiDist->GetBinCenter(i),fMultiDist->GetBinCenter(i),fMultiDist->GetBinContent(i));
-  }
+  // MakeNchMC(); //Only done if fRecGen is set
+  // if(fMultiDist) {
+  //   if(fMeanNch) delete fMeanNch;
+  //   fMeanNch = new TProfile("Mean_Nch_in_bin",";#it{N}_{ch}; #LT#it{N}_{ch}#GT",nrb,chbins);
+  //   fMeanNch->SetDirectory(0);
+  //   for(Int_t i=1;i<=fMultiDist->GetNbinsX();i++) fMeanNch->Fill(fMultiDist->GetBinCenter(i),fMultiDist->GetBinCenter(i),fMultiDist->GetBinContent(i));
+  // }
 }
 TH1 *PCCContainer::CalculateCovariance(const Int_t &nrb, AliProfileBS* l_covConst, AliProfileBS* l_covLin, AliProfileBS* l_mpt) {
   TH1 *reth = l_covConst->getHist(nrb);
   if(!l_covLin) return reth;
   TH1 *rethnopt = l_covLin->getHist(nrb);
+  if(!fUseFSRebin) l_mpt->PresetWeights(l_covConst);
   TH1 *mpt = l_mpt->getHist(nrb);
+  if(!fUseFSRebin) l_mpt->PresetWeights(0);
   rethnopt->Multiply(mpt);
   reth->Add(rethnopt,-1);
   delete rethnopt;
@@ -324,13 +353,13 @@ TH1 *PCCContainer::getCk(Int_t nrb, Bool_t bootstrap) {
 }
 TH1 *PCCContainer::getVar2(Int_t nrb, Bool_t bootstrap) {
   TH1 *c24 = getVarNHar(nrb,kC22,kC24);
-  c24->SetTitle(";#it{N}_{ch} (|#eta|<0.8); Var(#it{v}_{2}^{2})");
+  c24->SetTitle(Form(";%s; Var(#it{v}_{2}^{2})",fxTitle.Data()));
   if(!bootstrap) return c24;
   return getBootstrapped(c24,kVar2);
 }
 TH1 *PCCContainer::getVar3(Int_t nrb, Bool_t bootstrap) {
   TH1 *c34 = getVarNHar(nrb,kC32,kC34);
-  c34->SetTitle(";#it{N}_{ch} (|#eta|<0.8); Var(#it{v}_{3}^{2})");
+  c34->SetTitle(Form(";%s; Var(#it{v}_{3}^{2})",fxTitle.Data()));
   if(!bootstrap) return c34;
   return getBootstrapped(c34,kVar3);
 }
@@ -341,7 +370,7 @@ TH1 *PCCContainer::getVarNHar(Int_t nrb, lFunc f_cn2, lFunc f_cn4) {
   cn2->Multiply(cn2);
   cn4->Add(cn2);
   cn4->SetName("VarV2");
-  cn4->SetTitle(";#it{N}_{ch} (|#eta|<0.8); Var(#it{v}_{n}^{2})");
+  cn4->SetTitle(Form(";%s; Var(#it{v}_{n}^{2})",fxTitle.Data()));
   delete cn2;
   return cn4;
 }
@@ -353,7 +382,7 @@ TH1 *PCCContainer::getVar3Sub(Int_t nrb, Bool_t bootstrap) {
   c22->Multiply(c22);
   c24->Add(c22);
   c24->SetName("VarV2");
-  c24->SetTitle(";#it{N}_{ch} (|#eta|<0.8); Var(#it{v}_{2}^{2})");
+  c24->SetTitle(Form(";%s; Var(#it{v}_{2}^{2})",fxTitle.Data()));
   delete c22;
   if(!bootstrap) return c24;
   return getBootstrapped(c24,kVar3Sub);
@@ -454,36 +483,36 @@ TH1 *PCCContainer::getSigmaNHar(Int_t nrb, Bool_t bootstrap, lFunc varFunc) {
   TH1 *varv2 = (this->*varFunc)(nrb,bootstrap);
   TH1 *reth = HistSqrt(varv2,kFALSE);
   delete varv2;
-  reth->SetTitle(";#it{N}_{ch} (|#eta|<0.8); #sigma(#it{v}_{n}^{2})");
+  reth->SetTitle(Form(";%s; #sigma(#it{v}_{n}^{2})",fxTitle.Data()));
   return reth;
 };
 TH1 *PCCContainer::getSigma2(Int_t nrb, Bool_t bootstrap) {
   TH1 *reth = getSigmaNHar(nrb,bootstrap,kVar2);
-  reth->SetTitle(";#it{N}_{ch} (|#eta|<0.8); #sigma(#it{v}_{2}^{2})");
+  reth->SetTitle(Form(";%s; #sigma(#it{v}_{2}^{2})",fxTitle.Data()));
   return reth;
 };
 TH1 *PCCContainer::getSigma3(Int_t nrb, Bool_t bootstrap) {
   TH1 *reth = getSigmaNHar(nrb,bootstrap,kVar3);
-  reth->SetTitle(";#it{N}_{ch} (|#eta|<0.8); #sigma(#it{v}_{3}^{2})");
+  reth->SetTitle(Form(";%s; #sigma(#it{v}_{3}^{2})",fxTitle.Data()));
   return reth;
 };
 TH1 *PCCContainer::getSigma3Sub(Int_t nrb, Bool_t bootstrap) {
   TH1 *varv2 = getVar3Sub(nrb,bootstrap);
   TH1 *reth = HistSqrt(varv2,kFALSE);
   delete varv2;
-  reth->SetTitle(";#it{N}_{ch} (|#eta|<0.8); #sigma(#it{v}_{2}^{2})");
+  reth->SetTitle(Form(";%s; #sigma(#it{v}_{2}^{2})",fxTitle.Data()));
   reth->SetBit(TH1::kIsAverage, kFALSE);
   return reth;
 };
 TH1 *PCCContainer::getPCC2(Int_t nrb, Bool_t bootstrap) {
   TH1 *reth = getPCCNHar(nrb,kCov2,kSigma2);
-  reth->SetTitle(";#it{N}_{ch} (|#it{#eta}|<0.8); #rho(v_{2}^{2}, [#it{p}_{T}])");
+  reth->SetTitle(Form(";%s; #rho(v_{2}^{2}, [#it{p}_{T}])",fxTitle.Data()));
   if(!bootstrap) return reth;
   return getBootstrapped(reth,kPCC2);
 }
 TH1 *PCCContainer::getPCC3(Int_t nrb, Bool_t bootstrap) {
   TH1 *reth = getPCCNHar(nrb,kCov3,kSigma3);
-  reth->SetTitle(";#it{N}_{ch} (|#it{#eta}|<0.8); #rho(v_{3}^{2}, [#it{p}_{T}])");
+  reth->SetTitle(Form(";%s; #rho(v_{3}^{2}, [#it{p}_{T}])",fxTitle.Data()));
   if(!bootstrap) return reth;
   return getBootstrapped(reth,kPCC3);
 }
@@ -498,7 +527,7 @@ TH1 *PCCContainer::getPCCNHar(Int_t nrb, lFunc covFunc, lFunc sigmaFunc) {
   delete ck;
   delete sqrtCk;
   reth->SetName("PCC");
-  reth->SetTitle(";#it{N}_{ch} (|#it{#eta}|<0.8); #rho(v_{n}^{2}, [#it{p}_{T}])");
+  reth->SetTitle(Form(";%s; #rho(v_{n}^{2}, [#it{p}_{T}])",fxTitle.Data()));
   return reth;
 }
 
@@ -523,7 +552,7 @@ TH1 *PCCContainer::getPCC3Sub(Int_t nrb, Bool_t bootstrap) {
   delete ck;
   delete sqrtCk;
   reth->SetName("PCC");
-  reth->SetTitle(";#it{N}_{ch} (|#it{#eta}|<0.8); #rho(v_{2}^{2}, [#it{p}_{T}])");
+  reth->SetTitle(Form(";%s; #rho(v_{2}^{2}, [#it{p}_{T}])",fxTitle.Data()));
   if(!bootstrap) return reth;
   return getBootstrapped(reth,kPCC3Sub);
 }
@@ -720,6 +749,7 @@ void PCCContainer::ApplyBootstrapErrors(TH1 *inh, TProfile *inpf) {
   for(Int_t i=1;i<=inh->GetNbinsX();i++) {
     if(inh->GetBinContent(i)==0) continue;
     inh->SetBinError(i,inpf->GetBinError(i));
+    if(fBootstrapMean) inh->SetBinContent(i,inpf->GetBinContent(i));
   };
 }
 void PCCContainer::SetRecGenMatrix(TString infi, TString hname) {
@@ -866,7 +896,7 @@ TH1 *PCCContainer::getMultiHarmonic(Int_t nrb, Bool_t bootstrap) {
   //Ratio and cleaning up
   // printf("Dividing...\n");
   hCovV2V3Pt->Divide(hcksqrt);
-  hCovV2V3Pt->SetTitle(";#it{N}_{ch} (|#it{#eta}|<0.8); #rho(v_{2}^{2}, v_{3}^{2}, [#it{p}_{T}])");
+  hCovV2V3Pt->SetTitle(Form(";%s; #rho(v_{2}^{2}, v_{3}^{2}, [#it{p}_{T}])",fxTitle.Data()));
   if(!bootstrap) return hCovV2V3Pt;
   return getBootstrapped(hCovV2V3Pt,kMultiHar);
 }
@@ -924,6 +954,7 @@ void PCCContainer::OverrideSystematics(Int_t keyInd, Double_t newval) {
 }
 void PCCContainer::FSRebin(TH1 **inh) {
   if(!fNrb) return; //Rebin only when needed
+  if(!fUseFSRebin) return;
   TH1 *sH = *inh;
   TString hName(sH->GetName());
   sH->SetName(Form("%s_BU",hName.Data()));

@@ -49,8 +49,14 @@ public:
   void ApplyClosureCorrection(lFunc, TGraphErrors *ingr);
   void OverrideSystematics(Int_t keyInd, Double_t newval);
   void ClearSystematicOverride() { fSystOverride.clear(); };
+  Bool_t isInitialized() { return fInitialized; };
+  void SetBootstrapMean(Bool_t newval) { fBootstrapMean = newval; };
+  void SetUseFSRebin(Bool_t newval) { fUseFSRebin=newval; if(newval && fBrb && fNrb>0) RebinMulti(fNrb,fBrb); };
+  Bool_t fInitialized;
   TList *fObjs;
   TList *fSysts;
+  Bool_t fBootstrapMean;
+  Bool_t fUseFSRebin;
   Int_t fNrb;
   Double_t *fBrb;
   Int_t fSystAvgRange;
@@ -76,6 +82,9 @@ public:
   TH2 *fRecGen;
   TH1 *fNchMC;
   TF1 *fNchCorrFunc;
+  TList *f_mpt_tl;
+  TList *f_cov_tl;
+  TString fxTitle;
   void ApplyBootstrapErrors(TH1 *inh, TProfile *inpf);
   Bool_t BuildIndexMap(Bool_t force=kFALSE);
   void SetRebinForSyst(Int_t newval) { fNRebinForSyst=newval; };
@@ -115,6 +124,7 @@ public:
   void AddInQuad(TH1 *h1, TH1 *h2);
   void SetRecGenMatrix(TH2 *inh) { if(fRecGen) delete fRecGen; if(!inh) { printf("Unsetting NchRecGen matrix!\n"); return; }fRecGen = (TH2*)inh->Clone("RecGenMatrix"); fRecGen->SetDirectory(0); };
   void MakeNchMC();
+  void SetxTitle(TString newval) { fxTitle = newval; };
   TGraphErrors *NchRecToGen(TH1 *inh, Bool_t includeXError=kFALSE, Double_t xErrorSize=0.5); //if includeXError is true, MC Nch spread as x-error; otherwise, use xErrorSize
 
   //Kind-of template for bootstrapping:
