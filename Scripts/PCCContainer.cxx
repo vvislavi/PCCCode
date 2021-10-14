@@ -1,3 +1,7 @@
+/*Notes to myself:
+  Removed the l_covConst based rebinning from CalculateCovariance in favor of a global PresetWeights function.
+  This is b/c I'm not sure whether this should be used for MH or not (In particular, cov23 rebinning is done using w^3, PCC w/ w^{2} and other terms with w)
+*/
 #include "PCCContainer.h"
 using namespace PCCSpace;
 PCCContainer::PCCContainer():
@@ -6,7 +10,7 @@ PCCContainer::PCCContainer():
   fObjs(0),
   fSysts(0),
   fBootstrapMean(kFALSE),
-  fUseFSRebin(kTRUE),
+  fUseFSRebin(kFALSE),
   fNrb(0),
   fBrb(0),
   fSystAvgRange(0),
@@ -40,7 +44,7 @@ PCCContainer::PCCContainer(TString nomFile, Int_t MaxSyst): //Constructor to rea
   fObjs(0),
   fSysts(0),
   fBootstrapMean(kFALSE),
-  fUseFSRebin(kTRUE),
+  fUseFSRebin(kFALSE),
   fNrb(0),
   fBrb(0),
   fSystAvgRange(0),
@@ -140,13 +144,16 @@ void PCCContainer::AddInQuad(TH1 *h1, TH1 *h2) {
   for(Int_t i=1;i<=h1->GetNbinsX();i++) {
     Double_t bc1 = h1->GetBinContent(i);
     Double_t bc2 = h2->GetBinContent(i);
+    Double_t be1 = h1->GetBinError(i);
+    Double_t be2 = h2->GetBinError(i);
     if(bc1==0 && bc2==0) continue;
     h1->SetBinContent(i,TMath::Sqrt(bc1*bc1+bc2*bc2));
+    h1->SetBinError(i,TMath::Sqrt(be1*be1+be2*be2));
   }
 }
 void PCCContainer::ApplyErrors(TH1 *inh, TH1 *errors, Bool_t relative) {
   if(!inh || !errors) {printf("ApplyErrors: One of the histograms is missing!\n"); return; };
-  if(inh->GetNbinsX()!=errors->GetNbinsX() && fNRebinForSyst<2) { printf("ApplyErrors: number of bins in provided histograms are not the same!\n"); return; };
+  if(inh->GetNbinsX()!=errors->GetNbinsX()) { printf("ApplyErrors: number of bins in provided histograms are not the same (%i vs %i)!\n",inh->GetNbinsX(),errors->GetNbinsX()); return; }; // && fNRebinForSyst<2
   for(Int_t i=1;i<=inh->GetNbinsX();i++) {
     Double_t bc1 = inh->GetBinContent(i);
     Double_t bce = inh->GetBinError(i);
@@ -161,6 +168,18 @@ void PCCContainer::ApplyErrors(TH1 *inh, TH1 *errors, Bool_t relative) {
     inh->SetBinError(i,bce);
   }
 }
+void PCCContainer::ApplyErrors(TH1 *inh, TF1 *errors, Bool_t relative) {
+  if(!inh || !errors) {printf("ApplyErrors: Input histogram or TF1 is missing!\n"); return; };
+  for(Int_t i=1;i<=inh->GetNbinsX();i++) {
+    Double_t bc1 = inh->GetBinContent(i);
+    Double_t bce = inh->GetBinError(i);
+    if(bc1==0 && bce==0) continue;
+    Double_t bc2 = errors->Eval(inh->GetBinCenter(i));
+    bce = relative?(bc1*bc2):bc2;
+    inh->SetBinError(i,bce);
+  }
+}
+
 Bool_t PCCContainer::ConstructContainer(TString fina) {
   fInitialized = kFALSE;
   TFile *infi = getFile(fina);
@@ -196,13 +215,7 @@ Bool_t PCCContainer::ConstructContainer(TFile *infi, Int_t lInd) {
        else fmpt = (AliProfileBS*)fck->getObsList()->At(2);
   if(fck) fck->SetTitle(Form(";%s; #it{c}_{K}",fxTitle.Data()));
   else fckbs->SetTitle(Form(";%s; #it{c}_{K}",fxTitle.Data()));
-  // fMultiDist = (TH1*)tl->FindObject("MultiDistribution");
 
-
-  // TString sfsub = lInd?Form("_SystFlag%i_",lInd):"";
-  // fmpt = (TProfile*)tl->FindObject(Form("MeanPtClosure_ch%s",sfsub.Data()));
-  // if(!fmpt) { delete fck, delete fFC; return 0; };
-  // delete tl;
   f_cov_tl = (TList*)getObj(infi,Form("Covariance_%i",lInd));
   if(!f_cov_tl) f_cov_tl = (TList*)getObj(infi,"Covariance");
   if(!f_cov_tl) { delete fFC; delete fck; delete fckbs; delete f_mpt_tl; return 0; };
@@ -221,20 +234,17 @@ Bool_t PCCContainer::ConstructContainer(TFile *infi, Int_t lInd) {
     if(!fcov2 || !fcov3 || !fcov23 || !fcov2nopt || !fcov3nopt || !fcov23nopt ) { delete fcov2; delete fcov3; delete fcov23; delete fcov2nopt; delete fcov3nopt; delete fcov23nopt; };
   }
   if(!fcov2) { delete fFC; delete fck; delete fckbs; return 0;};
-  // delete tl;
-  // fcov2 = (AliProfileBS*)tl->At(0);
-  // fcov2nopt = (AliProfileBS*)tl->At(1);
-  // fcov2->SetTitle(";#it{N}_{ch} (|#eta|<0.8); cov(v_{2}^{2}, [#it{p}_{T}])");
-  // if(!fcov2) { delete fFC; delete fck; return 0; };
-  //Quick fix, should be handled properly
-  // fcov3 = (AliProfileBS*)tl->At(2);
-  // fcov3nopt = (AliProfileBS*)tl->At(3);
-  // fcov23 = (AliProfileBS*)tl->At(4);
-  // fcov23nopt = (AliProfileBS*)tl->At(5);
-  // if(!fcov3 || !fcov23) printf("ConstructContainer: Warning! covariance for v3 and/or v2v3 was not found! Multi-harmonic PCC will fail...\n");
-  // fmpt  = (AliProfileBS*)fmpt->Clone(Form("MeanPt_%i",lInd));
   fInitialized=kTRUE;
   return kTRUE;
+}
+void PCCContainer::PresetWeights(AliProfileBS *bs) {
+  if(fcov2) fcov2->PresetWeights(bs);
+  if(fcov23) fcov23->PresetWeights(bs);
+  if(fcov3) fcov3->PresetWeights(bs);
+  if(fcov2nopt) fcov2nopt->PresetWeights(bs);
+  if(fcov23nopt) fcov23nopt->PresetWeights(bs);
+  if(fcov3nopt) fcov3nopt->PresetWeights(bs);
+  if(fmpt) fmpt->PresetWeights(bs);
 }
 Bool_t PCCContainer::OverrideMeanPt(TString infi, Int_t lInd) {
   //Obviously, obsolete, when working with the AliCkContainer
@@ -290,6 +300,9 @@ void PCCContainer::RebinMulti(Int_t nrb, Double_t *chbins) {
     fMeanNch->SetDirectory(0);
     for(Int_t i=1;i<=fMultiDist->GetNbinsX();i++) fMeanNch->Fill(fMultiDist->GetBinCenter(i),fMultiDist->GetBinCenter(i),fMultiDist->GetBinContent(i));
   }
+  if(fSysts) {
+    for(Int_t i=0;i<fSysts->GetEntries();i++) ((PCCContainer*)fSysts->At(i))->RebinMulti(nrb,chbins);
+  }
   if(fUseFSRebin) return;
   if(!fFC || !fck || !fcov2) return;
   if(fFC) fFC->SetMultiRebin(nrb,chbins);
@@ -304,9 +317,6 @@ void PCCContainer::RebinMulti(Int_t nrb, Double_t *chbins) {
   if(fcov23nopt) fcov23nopt->RebinMulti(nrb,chbins);
   if(fcov3nopt) fcov3nopt->RebinMulti(nrb,chbins);
   if(fmpt) fmpt->RebinMulti(nrb,chbins);
-  if(fSysts) {
-    for(Int_t i=0;i<fSysts->GetEntries();i++) ((PCCContainer*)fSysts->At(i))->RebinMulti(nrb,chbins);
-  }
   // MakeNchMC(); //Only done if fRecGen is set
   // if(fMultiDist) {
   //   if(fMeanNch) delete fMeanNch;
@@ -315,13 +325,22 @@ void PCCContainer::RebinMulti(Int_t nrb, Double_t *chbins) {
   //   for(Int_t i=1;i<=fMultiDist->GetNbinsX();i++) fMeanNch->Fill(fMultiDist->GetBinCenter(i),fMultiDist->GetBinCenter(i),fMultiDist->GetBinContent(i));
   // }
 }
-TH1 *PCCContainer::CalculateCovariance(const Int_t &nrb, AliProfileBS* l_covConst, AliProfileBS* l_covLin, AliProfileBS* l_mpt) {
+TH1 *PCCContainer::CalculateCovariance(const Int_t &nrb, AliProfileBS* l_covConst, AliProfileBS* l_covLin, AliProfileBS* l_mpt, AliProfileBS *rbWeights) {
+  if(!rbWeights) rbWeights = l_covConst;
+  if(!fUseFSRebin) {
+    l_mpt->PresetWeights(rbWeights);
+  //   l_covConst->PresetWeights(rbWeights);
+  //   l_covLin->PresetWeights(rbWeights);
+  };
   TH1 *reth = l_covConst->getHist(nrb);
   if(!l_covLin) return reth;
   TH1 *rethnopt = l_covLin->getHist(nrb);
-  if(!fUseFSRebin) l_mpt->PresetWeights(l_covConst);
   TH1 *mpt = l_mpt->getHist(nrb);
-  if(!fUseFSRebin) l_mpt->PresetWeights(0);
+  if(!fUseFSRebin) {
+    l_mpt->PresetWeights(0);
+  //   l_covConst->PresetWeights(0);
+  //   l_covLin->PresetWeights(0);
+  };
   rethnopt->Multiply(mpt);
   reth->Add(rethnopt,-1);
   delete rethnopt;
@@ -557,21 +576,66 @@ TH1 *PCCContainer::getPCC3Sub(Int_t nrb, Bool_t bootstrap) {
   return getBootstrapped(reth,kPCC3Sub);
 }
 TProfile *PCCContainer::getStatistics(lFunc sf) {
-  TH1 **htmp = new TH1*[10];
-  for(Int_t i=0;i<10;i++) htmp[i] = (this->*sf)(i,kFALSE);
+  Int_t nSubs = fcov2->getNSubs();
+  TH1 **htmp = new TH1*[nSubs];
+  for(Int_t i=0;i<nSubs;i++) htmp[i] = (this->*sf)(i,kFALSE);
   Int_t nxbins = htmp[0]->GetNbinsX();
   Double_t *xbins = new Double_t[nxbins+1];
   htmp[0]->GetXaxis()->GetLowEdge(xbins);
   xbins[nxbins] = htmp[0]->GetXaxis()->GetBinUpEdge(nxbins);
   TProfile *retpf = new TProfile("Statistics_Profile","StatProf",nxbins,xbins);
-  for(Int_t i=0;i<htmp[0]->GetNbinsX();i++)
-    for(Int_t j=0;j<10;j++)
+  for(Int_t i=1;i<=htmp[0]->GetNbinsX();i++)
+    for(Int_t j=0;j<nSubs;j++)
       retpf->Fill(htmp[0]->GetBinCenter(i),htmp[j]->GetBinContent(i));
-  for(Int_t i=0; i<10;i++) delete htmp[i];
+  for(Int_t i=0; i<nSubs;i++) delete htmp[i];
   delete [] htmp;
   delete [] xbins;
   return retpf;
 }
+TProfile *PCCContainer::getStatistics(lFunc sf, Int_t lSyst) {
+  //Bootstrapping relative differences between nominal and systematic check
+  Int_t nSubs = fcov2->getNSubs();
+  TH1 **htmp = new TH1*[nSubs];
+  for(Int_t i=0;i<nSubs;i++) { htmp[i] = (this->*sf)(i,kFALSE); htmp[i]->SetName(Form("Nom_%i",i)); };
+  PCCContainer *trg = (PCCContainer*)fSysts->FindObject(Form("PCCCont_Syst%i",lSyst));
+  TH1 **hsys = new TH1*[nSubs];
+  for(Int_t i=0;i<nSubs;i++) hsys[i] = (trg->*sf)(i,kFALSE);
+  for(Int_t i=0;i<nSubs;i++) { hsys[i]->Add(htmp[i],-1); hsys[i]->Divide(htmp[i]); };
+  Int_t nxbins = htmp[0]->GetNbinsX();
+  Double_t *xbins = new Double_t[nxbins+1];
+  htmp[0]->GetXaxis()->GetLowEdge(xbins);
+  xbins[nxbins] = htmp[0]->GetXaxis()->GetBinUpEdge(nxbins);
+  TProfile *retpf = new TProfile("Statistics_Profile","StatProf",nxbins,xbins);
+  for(Int_t i=1;i<=hsys[0]->GetNbinsX();i++)
+    for(Int_t j=0;j<nSubs;j++)
+      retpf->Fill(htmp[0]->GetBinCenter(i),hsys[j]->GetBinContent(i));
+  for(Int_t i=0; i<nSubs;i++) { delete htmp[i]; delete hsys[i]; };
+  delete [] htmp;
+  delete [] hsys;
+  delete [] xbins;
+  return retpf;
+}
+TH2 *PCCContainer::getStatisticsDist(lFunc sf,Int_t nybins, Double_t ymin, Double_t ymax) {
+  Int_t nSubs = fcov2->getNSubs();
+  TH1 **htmp = new TH1*[nSubs];
+  TH1 *hCent = (this->*sf)(-1,kFALSE);
+  for(Int_t i=0;i<nSubs;i++) htmp[i] = (this->*sf)(i,kFALSE);
+  Int_t nxbins = htmp[0]->GetNbinsX();
+  Double_t *xbins = new Double_t[nxbins+1];
+  htmp[0]->GetXaxis()->GetLowEdge(xbins);
+  xbins[nxbins] = htmp[0]->GetXaxis()->GetBinUpEdge(nxbins);
+  TH2 *reth = new TH2D("statDist","statDist",nxbins,xbins[0],xbins[nxbins],nybins,ymin,ymax);
+  reth->GetXaxis()->Set(nxbins,xbins);
+  for(Int_t i=1;i<=htmp[0]->GetNbinsX();i++)
+    for(Int_t j=0;j<nSubs;j++)
+      reth->Fill(htmp[0]->GetBinCenter(i),htmp[j]->GetBinContent(i));//-hCent->GetBinContent(i));
+  for(Int_t i=0; i<nSubs;i++) delete htmp[i];
+  delete [] htmp;
+  delete [] xbins;
+  delete hCent;
+  return reth;
+}
+
 TH1 *PCCContainer::getSystematicsObs(lFunc sf, Int_t lSyst, Bool_t bootstrap) {
   if(sf==kDisabled) return 0;
   if(fNrb>0) bootstrap=kTRUE;
@@ -597,19 +661,28 @@ TH1 *PCCContainer::getSystematicsObs(lFunc sf, Int_t lSyst, Bool_t bootstrap) {
   // if(!trg) { printf("Systematics index %i not found!\n",lSyst); return 0; };
   // return (trg->*sf)(-1,bootstrap);
 }
-TH1 *PCCContainer::getSystematics(lFunc sf, Int_t lSyst, Bool_t rel, Bool_t bootstrap, Bool_t applyBarlow) {
+TH1 *PCCContainer::getSystematics(lFunc sf, Int_t lSyst, Bool_t rel, Bool_t bootstrap, Bool_t applyBarlow, Bool_t takeAbs) {
   if(sf==kDisabled) return 0;
   TH1 *mod = getSystematicsObs(sf,lSyst,bootstrap);//(trg->*sf)(-1,bootstrap);
+  Double_t *relErrs = 0;
+  if(bootstrap) {
+    relErrs = new Double_t[mod->GetNbinsX()];
+    for(Int_t i=1;i<=mod->GetNbinsX();i++) if(mod->GetBinContent(i)==0) continue; else relErrs[i-1] = mod->GetBinError(i)/mod->GetBinContent(i);
+  }
   if(!mod) {printf("Could not fetch systematic index %i\n", lSyst); return 0; };
   mod->SetName("Modded");
   //If we have final state rebinning, then need bootstrapping on the nominal here. Otherwise, final state rebinning will be bogus
-  TH1 *nom = (this->*sf)(-1,fNrb>0?kTRUE:bootstrap);
-  FSRebin(&nom);
+  TH1 *nom = 0;
+  if(fUseFSRebin) {
+    nom = (this->*sf)(-1,fNrb>0?kTRUE:bootstrap);
+    FSRebin(&nom);
+  } else nom = (this->*sf)(-1,bootstrap);
   mod->SetName(Form("RelSyst_%s_Ind%i",nom->GetName(),lSyst));
   mod->Add(nom,-1);
   if(rel)
     mod->Divide(nom);
   HistOper(mod,0,1,kTRUE,kTRUE);
+  if(bootstrap) { for(Int_t i=1;i<=mod->GetNbinsX();i++) if(relErrs[i-1]==0) continue; else mod->SetBinError(i,relErrs[i-1]*(rel?1:TMath::Abs(mod->GetBinContent(i)))); };  //):(mod->GetBinContent(i)*relErrs[i-1])); };
   delete nom;
   if(!applyBarlow)
     return mod;
@@ -653,25 +726,27 @@ Bool_t PCCContainer::BuildIndexMap(Bool_t force) {
   };
   return kTRUE;
 };
-vector<TH1*> PCCContainer::getSystSubset(lFunc sf, Int_t KeyInd, Bool_t relative, Bool_t applyBarlow) {
+vector<TH1*> PCCContainer::getSystSubset(lFunc sf, Int_t KeyInd, Bool_t relative, Bool_t inclErrors, Bool_t applyBarlow, Bool_t takeAbs) {
   if(!(int)fIndMap.size()) if(!BuildIndexMap(kTRUE)) { printf("getSystSubset: could not build map!\n"); return nullvec; };
   if(!fIndMap.count(KeyInd)) { printf("getSystSubset: could not find key %i in the map!\n",KeyInd); return nullvec; };
   vector<int> inds = fIndMap.at(KeyInd);
   vector<TH1*> retvec;
-  for(Int_t j=0;j<(int)inds.size();j++) retvec.push_back(getSystematics(sf,inds.at(j),relative,kFALSE,applyBarlow));
+  for(Int_t j=0;j<(int)inds.size();j++) {
+    retvec.push_back(getSystematics(sf,inds.at(j),relative,inclErrors,applyBarlow,takeAbs));
+  };
   return retvec;
 }
-vector<TH1*> PCCContainer::getMergedErrors(lFunc sf, Bool_t relative, Bool_t applyBarlow) {
+vector<TH1*> PCCContainer::getMergedErrors(lFunc sf, Bool_t relative, Bool_t inclErrors, Bool_t applyBarlow, Bool_t weightByErrors) {
   if(!(int)fIndMap.size()) if(!BuildIndexMap(kTRUE)) { printf("getMergedErrors: could not build map!\n"); return nullvec; };
   vector<TH1*> reth;
   for(auto errcind=fIndMap.begin(); errcind!=fIndMap.end(); errcind++) {
     Int_t targetInd = errcind->first;
     if(targetInd==0) continue; //0 contains all those that are not relevant
-    vector<TH1*> lSubsets = getSystSubset(sf,targetInd,relative,applyBarlow);
+    vector<TH1*> lSubsets = getSystSubset(sf,targetInd,relative,inclErrors,applyBarlow,!weightByErrors); //if we want to weight by errors, then we shouldn't take the absolute value here
     if((int)lSubsets.size()==0) continue; //if no subsets, then continue
     TH1 *rh = (TH1*)lSubsets.at(0)->Clone(Form("MergedErrors_%i",targetInd));
     if(!rh) continue;
-    RemoveErrors(rh); //To remove errors
+    if(!inclErrors) RemoveErrors(rh); //To remove errors
     reth.push_back(rh);
     if(fSystOverride.count(targetInd)) {
       Double_t newerr = fSystOverride.at(targetInd);
@@ -685,15 +760,59 @@ vector<TH1*> PCCContainer::getMergedErrors(lFunc sf, Bool_t relative, Bool_t app
     for(auto sh = lSubsets.begin()+1; sh!=lSubsets.end(); sh++) {
       //Looping over bins
       for(Int_t i=1;i<=rh->GetNbinsX();i++) {
-        Double_t vmax = TMath::Max(rh->GetBinContent(i),(*sh)->GetBinContent(i));
-        rh->SetBinContent(i,vmax);
+        if(inclErrors) {
+          Double_t bc1 = rh->GetBinContent(i);
+          Double_t bc2 = (*sh)->GetBinContent(i);
+          Double_t be1 = rh->GetBinError(i);
+          Double_t be2 = (*sh)->GetBinError(i);
+          if(weightByErrors) {
+            be1*=be1;
+            be2*=be2;
+            Double_t val1 = be1>0?bc1/be1:0;
+            Double_t val2 = be2>0?bc2/be2:0;
+            Double_t err1 = be1>0?1./be1:0;
+            Double_t err2 = be2>0?1./be2:0;
+            rh->SetBinContent(i,val1+val2);
+            rh->SetBinError(i,err1+err2);
+          } else {
+            rh->SetBinContent(i,TMath::Max(bc1,bc2));
+            rh->SetBinError(i,bc1>bc2?be1:be2);
+          }
+        } else {
+          if(weightByErrors) {
+            Double_t bc1 = rh->GetBinContent(i);
+            Double_t bc2 = (*sh)->GetBinContent(i);
+            Double_t be1 = rh->GetBinError(i);
+            Double_t be2 = (*sh)->GetBinError(i);
+            be1*=be1;
+            be2*=be2;
+            Double_t val1 = be1>0?bc1/be1:0;
+            Double_t val2 = be2>0?bc2/be2:0;
+            Double_t err1 = be1>0?1./be1:0;
+            Double_t err2 = be2>0?1./be2:0;
+            rh->SetBinContent(i,val1+val2);
+            rh->SetBinError(i,err1+err2);
+          } else {
+            Double_t vmax = TMath::Max(rh->GetBinContent(i),(*sh)->GetBinContent(i));
+            rh->SetBinContent(i,vmax);
+          };
+        };
       }
       (*sh)->Delete(); //Clean after myself
+      if(weightByErrors) {
+        for(Int_t i=1;i<=rh->GetNbinsX();i++) {
+          Double_t bc = rh->GetBinContent(i);
+          Double_t be = rh->GetBinError(i);
+          if(be==0) continue;
+          rh->SetBinContent(i,TMath::Abs(bc/be));
+          rh->SetBinError(i,inclErrors?(1./TMath::Sqrt(be)):0);
+        }
+      }
     }
   }
   return reth;
 }
-TH1 *PCCContainer::getSystematicsSummed(lFunc sf, Bool_t relative, Bool_t applyBarlow) {
+TH1 *PCCContainer::getSystematicsSummed(lFunc sf, Bool_t relative, Bool_t inclErrors, Bool_t applyBarlow) {
   vector<TH1*> mergedErrors;
   if(fNRebinForSyst>1) {
     printf("Rebinning for systematics is not implemented yet. The standard rebinning is not valid here, and the FS rebinning isn't implemented yet.\n");
@@ -703,7 +822,7 @@ TH1 *PCCContainer::getSystematicsSummed(lFunc sf, Bool_t relative, Bool_t applyB
     tmpc->RebinMulti(fNRebinForSyst);
     mergedErrors = tmpc->getMergedErrors(sf,relative,applyBarlow);
     delete tmpc;*/
-  } else mergedErrors = getMergedErrors(sf,relative,applyBarlow);
+  } else mergedErrors = getMergedErrors(sf,relative,inclErrors,applyBarlow);
   if((int)mergedErrors.size()==0) {printf("getSystematicsSummed: could not find any errors to sum\n"); return 0; };
   TH1 *reth = (TH1*)mergedErrors.at(0)->Clone("MergedErrors_Summed");
   reth->Reset();
@@ -735,15 +854,22 @@ TH1 *PCCContainer::getSystematicsSummed(lFunc sf, Bool_t relative, Bool_t applyB
   }
   return reth;
 };
-TH1 *PCCContainer::VarSyst(lFunc sf, Bool_t relative, Bool_t applyBarlow) {
+TH1 *PCCContainer::VarSyst(lFunc sf, Bool_t relative, Bool_t applyBarlow, TObject *inErr) {
   if(sf==kDisabled) return 0;
-  TH1 *systs = getSystematicsSummed(sf,relative,applyBarlow);
-  systs->SetName("Systematics_Summed");
   TH1 *cvals = (this->*sf)(-1,kFALSE);
-  ApplyErrors(cvals,systs,relative);
-  delete systs;
+  FSRebin(&cvals);
+  TH1 *hErr = dynamic_cast<TH1*>(inErr);
+  TF1 *fErr = dynamic_cast<TF1*>(inErr);
+  if(!inErr) {
+    TH1 *systs = getSystematicsSummed(sf,relative,applyBarlow);
+    systs->SetName("Systematics_Summed");
+    ApplyErrors(cvals,systs,relative);
+    delete systs;
+  } else if(hErr) ApplyErrors(cvals,hErr,relative);
+          else ApplyErrors(cvals,fErr,relative);
   return cvals;
 }
+
 void PCCContainer::ApplyBootstrapErrors(TH1 *inh, TProfile *inpf) {
   if(inh->GetNbinsX()!=inpf->GetNbinsX()) {printf("Bootstrap warning: number of bins in histogram and profile is not the same! Not applying...\n"); return; };
   for(Int_t i=1;i<=inh->GetNbinsX();i++) {
@@ -900,6 +1026,107 @@ TH1 *PCCContainer::getMultiHarmonic(Int_t nrb, Bool_t bootstrap) {
   if(!bootstrap) return hCovV2V3Pt;
   return getBootstrapped(hCovV2V3Pt,kMultiHar);
 }
+TH1 *PCCContainer::getMHTerm1(Int_t nrb, Bool_t bootstrap) {
+  //Calculating numerator
+  if(!fcov23) return 0;
+  TH1 *hCovV2V3Pt = (this->*kCov23)(nrb,kFALSE);
+  // printf("Calculating denominator...\n");
+  //Calculating denominator
+  TH1 *sigmaV2    = (this->*kSigma2)(nrb,kFALSE);
+  TH1 *sigmaV3    = (this->*kSigma3)(nrb,kFALSE);
+  TH1 *ck         = (this->*kCk)(nrb,kFALSE);
+  TH1 *hcksqrt    = HistSqrt(ck,kFALSE);
+  hcksqrt->Multiply(sigmaV2);
+  hcksqrt->Multiply(sigmaV3);
+  delete sigmaV2;
+  delete sigmaV3;
+  delete ck;
+  //Ratio and cleaning up
+  // printf("Dividing...\n");
+  hCovV2V3Pt->Divide(hcksqrt);
+  hCovV2V3Pt->SetTitle(Form(";%s; #rho(v_{2}^{2}, v_{3}^{2}, [#it{p}_{T}])",fxTitle.Data()));
+  if(!bootstrap) return hCovV2V3Pt;
+  return getBootstrapped(hCovV2V3Pt,kMH1);
+}
+TH1 *PCCContainer::getMHTerm2(Int_t nrb, Bool_t bootstrap) {
+  //Calculating numerator
+  TH1 *hCovV2Pt   = (this->*kCov2)(nrb,kFALSE);
+  TH1 *hC32sq     = (this->*kC32)(nrb,kFALSE);
+  hCovV2Pt->Multiply(hC32sq);
+  delete hC32sq;
+  // printf("Calculating denominator...\n");
+  //Calculating denominator
+  TH1 *sigmaV2    = (this->*kSigma2)(nrb,kFALSE);
+  TH1 *sigmaV3    = (this->*kSigma3)(nrb,kFALSE);
+  TH1 *ck         = (this->*kCk)(nrb,kFALSE);
+  TH1 *hcksqrt    = HistSqrt(ck,kFALSE);
+  hcksqrt->Multiply(sigmaV2);
+  hcksqrt->Multiply(sigmaV3);
+  delete sigmaV2;
+  delete sigmaV3;
+  delete ck;
+  //Ratio and cleaning up
+  // printf("Dividing...\n");
+  hCovV2Pt->Divide(hcksqrt);
+  hCovV2Pt->SetTitle(Form(";%s; #rho(v_{2}^{2}, v_{3}^{2}, [#it{p}_{T}])",fxTitle.Data()));
+  if(!bootstrap) return hCovV2Pt;
+  return getBootstrapped(hCovV2Pt,kMH2);
+}
+TH1 *PCCContainer::getMHTerm3(Int_t nrb, Bool_t bootstrap) {
+  //Calculating numerator
+  TH1 *hCovV3Pt   = (this->*kCov3)(nrb,kFALSE);
+  TH1 *hC22sq     = (this->*kC22)(nrb,kFALSE);
+  hCovV3Pt->Multiply(hC22sq);
+  delete hC22sq;
+  // printf("Calculating denominator...\n");
+  //Calculating denominator
+  TH1 *sigmaV2    = (this->*kSigma2)(nrb,kFALSE);
+  TH1 *sigmaV3    = (this->*kSigma3)(nrb,kFALSE);
+  TH1 *ck         = (this->*kCk)(nrb,kFALSE);
+  TH1 *hcksqrt    = HistSqrt(ck,kFALSE);
+  hcksqrt->Multiply(sigmaV2);
+  hcksqrt->Multiply(sigmaV3);
+  delete sigmaV2;
+  delete sigmaV3;
+  delete ck;
+  //Ratio and cleaning up
+  // printf("Dividing...\n");
+  hCovV3Pt->Divide(hcksqrt);
+  hCovV3Pt->SetTitle(Form(";%s; #rho(v_{2}^{2}, v_{3}^{2}, [#it{p}_{T}])",fxTitle.Data()));
+  if(!bootstrap) return hCovV3Pt;
+  return getBootstrapped(hCovV3Pt,kMH3);
+}
+TH1 *PCCContainer::getMHTerm23(Int_t nrb, Bool_t bootstrap) {
+  //Calculating numerator
+  TH1 *hCovV2Pt   = (this->*kCov2)(nrb,kFALSE);
+  TH1 *hC32sq     = (this->*kC32)(nrb,kFALSE);
+  TH1 *hCovV3Pt   = (this->*kCov3)(nrb,kFALSE);
+  TH1 *hC22sq     = (this->*kC22)(nrb,kFALSE);
+  hCovV3Pt->Multiply(hC22sq);
+  hCovV2Pt->Multiply(hC32sq);
+  hCovV2Pt->Add(hCovV3Pt);
+  delete hCovV3Pt;
+  delete hC22sq;
+  delete hC32sq;
+  // printf("Calculating denominator...\n");
+  //Calculating denominator
+  TH1 *sigmaV2    = (this->*kSigma2)(nrb,kFALSE);
+  TH1 *sigmaV3    = (this->*kSigma3)(nrb,kFALSE);
+  TH1 *ck         = (this->*kCk)(nrb,kFALSE);
+  TH1 *hcksqrt    = HistSqrt(ck,kFALSE);
+  hcksqrt->Multiply(sigmaV2);
+  hcksqrt->Multiply(sigmaV3);
+  delete sigmaV2;
+  delete sigmaV3;
+  delete ck;
+  //Ratio and cleaning up
+  // printf("Dividing...\n");
+  hCovV2Pt->Divide(hcksqrt);
+  hCovV2Pt->SetTitle(Form(";%s; #rho(v_{2}^{2}, v_{3}^{2}, [#it{p}_{T}])",fxTitle.Data()));
+  if(!bootstrap) return hCovV2Pt;
+  return getBootstrapped(hCovV2Pt,kMH23);
+}
+
 
 TH1 *PCCContainer::GetTerms() {
   // fFC->SetIDName("ChSC");
@@ -947,6 +1174,21 @@ void PCCContainer::ApplyClosureCorrection(lFunc sf, TGraphErrors *ingr) {
   };
   delete tfunc;
   tempf->Close();
+}
+void PCCContainer::f_ResetBin(Int_t nbin) {
+    if(fcov2) fcov2->ResetBin(nbin);
+    if(fcov3) fcov3->ResetBin(nbin);
+    if(fcov23) fcov23->ResetBin(nbin);
+    if(fcov2nopt) fcov2nopt->ResetBin(nbin);
+    if(fcov3nopt) fcov3nopt->ResetBin(nbin);
+    if(fcov23nopt) fcov23nopt->ResetBin(nbin);
+}
+void PCCContainer::ResetBin(Int_t nbin, Int_t lSyst) {
+  if(!lSyst || lSyst<0) f_ResetBin(nbin);
+  if(lSyst>0) if(fSysts->FindObject(Form("PCCCont_Syst%i",lSyst))) ((PCCContainer*)fSysts->FindObject(Form("PCCCont_Syst%i",lSyst)))->ResetBin(nbin,0);
+}
+void PCCContainer::ResetBin(Int_t nbin, vector<Int_t> lSInd) {
+  for(auto i:lSInd) ResetBin(nbin,i);
 }
 void PCCContainer::OverrideSystematics(Int_t keyInd, Double_t newval) {
   if(fSystOverride.count(keyInd)) fSystOverride.at(keyInd) = newval;

@@ -31,11 +31,11 @@ public:
   // void RebinMulti(Int_t nrb);
   void RebinMulti(Int_t nrb, Double_t *chbins);
   TH1 *Var(lFunc sf, Int_t ind=0) { return getSystematicsObs(sf,ind,kTRUE); };//(this->*sf)(ind,kTRUE); };
-  TH1 *VarSyst(lFunc, Bool_t relative=kTRUE, Bool_t applyBarlow=kTRUE);
+  TH1 *VarSyst(lFunc, Bool_t relative=kTRUE, Bool_t applyBarlow=kTRUE, TObject *inErr=0);
   //Simple graph with statistical uncertainties
   TGraphErrors *Gr(lFunc sf, Double_t xOffset=0, Double_t xError=-1) { TH1 *ht = Var(sf); TGraphErrors *gr = f_HtoGr(ht,xOffset,xError); delete ht; return gr; };
   //Simple graph with syst. uncertainties
-  TGraphErrors *GrSyst(lFunc sf, Bool_t relative=kTRUE, Bool_t applyBarlow=kTRUE, Double_t xOffset=0, Double_t xError=-1) { TH1 *ht = VarSyst(sf,relative,applyBarlow); TGraphErrors *gr = f_HtoGr(ht,xOffset,xError); delete ht; return gr; };
+  TGraphErrors *GrSyst(lFunc sf, Bool_t relative=kTRUE, Bool_t applyBarlow=kTRUE, TObject *inErr=0, Double_t xOffset=0, Double_t xError=-1) { TH1 *ht = VarSyst(sf,relative,applyBarlow,inErr); TGraphErrors *gr = f_HtoGr(ht,xOffset,xError); delete ht; return gr; };
   //Graph with stat + Nch unfolding and closure correction
   TGraphErrors *GrVar(lFunc sf, Bool_t includeXError=kFALSE, Double_t xErrorSize=0.5) { TH1 *htemp = Var(sf,0); TGraphErrors *retgr = NchRecToGen(htemp,includeXError,xErrorSize); delete htemp; ApplyClosureCorrection(sf, retgr); return retgr; };
   //Graph with syst + Nch unfolding and closure correction
@@ -52,6 +52,9 @@ public:
   Bool_t isInitialized() { return fInitialized; };
   void SetBootstrapMean(Bool_t newval) { fBootstrapMean = newval; };
   void SetUseFSRebin(Bool_t newval) { fUseFSRebin=newval; if(newval && fBrb && fNrb>0) RebinMulti(fNrb,fBrb); };
+  void ResetBin(Int_t nbin, Int_t lSyst=-1);
+  void ResetBin(Int_t nbin, vector<Int_t> lSInd);
+  void PresetWeights(AliProfileBS *bs);
   Bool_t fInitialized;
   TList *fObjs;
   TList *fSysts;
@@ -89,7 +92,7 @@ public:
   Bool_t BuildIndexMap(Bool_t force=kFALSE);
   void SetRebinForSyst(Int_t newval) { fNRebinForSyst=newval; };
   void SetSystAverageRange(Int_t lrange, Double_t lMaxAllowed=1) {fSystAvgRange=lrange; fMaxAllowedSyst=lMaxAllowed; };
-  TH1 *CalculateCovariance(const Int_t &nrb, AliProfileBS* l_covConst, AliProfileBS* l_covLin, AliProfileBS* l_mpt);
+  TH1 *CalculateCovariance(const Int_t &nrb, AliProfileBS* l_covConst, AliProfileBS* l_covLin, AliProfileBS* l_mpt, AliProfileBS *rbWeights=0);
   vector<TH1*> nullvec;
   //basic calls:
   TH1 *getCov2(Int_t nrb=-1, Bool_t bootstrap=kTRUE);
@@ -115,6 +118,13 @@ public:
   TH1 *getC34(Int_t nrb=-1, Bool_t bootstrap=kTRUE);
   TH1 *getC243Sub(Int_t nrb=-1, Bool_t bootstrap=kTRUE);
   TH1 *getC243Sub(AliGFWFlowContainer *infc, Int_t nrb, Bool_t bootstrap, TString ms, TString conf1, TString conf2);
+
+  //Debugging
+  TH1 *getMHTerm1(Int_t nrb=-1, Bool_t bootstrap=kTRUE);
+  TH1 *getMHTerm2(Int_t nrb=-1, Bool_t bootstrap=kTRUE);
+  TH1 *getMHTerm3(Int_t nrb=-1, Bool_t bootstrap=kTRUE);
+  TH1 *getMHTerm23(Int_t nrb=-1, Bool_t bootstrap=kTRUE);
+
 // private:
   TFile *getFile(TString fina);
   TObject *getObj(TFile *infi, TString objName);
@@ -146,19 +156,23 @@ public:
 
   void ApplyBarlow(TH1 *target, TH1 *barlow);
   void ApplyErrors(TH1 *inh, TH1 *errors, Bool_t relative=kTRUE);
+  void ApplyErrors(TH1 *inh, TF1 *errors, Bool_t relative=kTRUE);
   void RemoveErrors(TH1 *inh) {for(Int_t i=1;i<=inh->GetNbinsX();i++) if(inh->GetBinError(i)) inh->SetBinError(i,0); };
   TH1 *HistSqrt(TH1 *inh, Bool_t removeErrors=kFALSE);
   TProfile *getStatistics(lFunc);
+  TH2 *getStatisticsDist(lFunc,Int_t nbins=100, Double_t ymin=-1, Double_t ymax=1);
+  TProfile *getStatistics(lFunc, Int_t);
   TH1 *getSystematicsObs(lFunc, Int_t lSyst, Bool_t bootstrap=kFALSE);
   TH1 *getBarlowTest(lFunc, Int_t lSyst, Double_t corrFactor=1);
-  TH1 *getSystematics(lFunc, Int_t lSyst, Bool_t relative=kTRUE, Bool_t bootstrap=kFALSE, Bool_t applyBarlow=kFALSE);
-  TH1* getSystematicsSummed(lFunc, Bool_t relative=kTRUE, Bool_t applyBarlow=kFALSE);
-  vector<TH1*> getMergedErrors(lFunc, Bool_t relative=kTRUE, Bool_t applyBarlow=kFALSE);
-  vector<TH1*> getSystSubset(lFunc, Int_t KeyInd, Bool_t relative=kTRUE, Bool_t ApplyBarlow=kFALSE);
+  TH1 *getSystematics(lFunc, Int_t lSyst, Bool_t relative=kTRUE, Bool_t bootstrap=kFALSE, Bool_t applyBarlow=kFALSE, Bool_t takeAbs=kTRUE);
+  TH1* getSystematicsSummed(lFunc, Bool_t relative=kTRUE, Bool_t inclErrors=kFALSE, Bool_t applyBarlow=kFALSE);
+  vector<TH1*> getMergedErrors(lFunc, Bool_t relative=kTRUE, Bool_t inclErrors=kFALSE, Bool_t applyBarlow=kFALSE, Bool_t weightByErrors=kFALSE);
+  vector<TH1*> getSystSubset(lFunc, Int_t KeyInd, Bool_t relative=kTRUE, Bool_t inclErrors=kFALSE, Bool_t ApplyBarlow=kFALSE, Bool_t takeAbs=kTRUE);
   TH1 *GetTerms();
   void FSRebin(TH1 **inh);
 private:
   TGraphErrors *f_HtoGr(TH1 *inh, Double_t xOffset=0, Double_t xError=-1);
+  void f_ResetBin(Int_t nbin);
 
   ClassDef(PCCContainer, 1);
 };
@@ -186,5 +200,10 @@ namespace PCCSpace {
   PCCContainer::lFunc kC243Sub = &PCCContainer::getC243Sub; //SC{2,4}, 3-sub
   PCCContainer::lFunc kSame = 0; //NA
   PCCContainer::lFunc kDisabled = 0; //NA
+  PCCContainer::lFunc kMH1 = &PCCContainer::getMHTerm1; //SC{2,4}, 3-sub
+  PCCContainer::lFunc kMH2 = &PCCContainer::getMHTerm2; //SC{2,4}, 3-sub
+  PCCContainer::lFunc kMH3 = &PCCContainer::getMHTerm3; //SC{2,4}, 3-sub
+  PCCContainer::lFunc kMH23 = &PCCContainer::getMHTerm23; //SC{2,4}, 3-sub
+
 }
 #endif
